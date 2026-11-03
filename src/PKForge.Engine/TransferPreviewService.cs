@@ -72,6 +72,8 @@ public sealed class TransferPreviewService
         {
             if (!scratch.ImportSlot(box, slot, entityBytes, format))
                 return null;
+            IReadOnlyList<string> sourceWarnings = Quetzal.QuetzalEntry.IsFormat(EntityBytes.Normalize(format)) || Quetzal.QuetzalEntry.HasMagic(entityBytes)
+                ? new Quetzal.QuetzalEntry(entityBytes).Conversion.Warnings : [];
             var own = EntityBytes.Normalize(format) is { } normalized
                 && (scratch is CfruEngineSession cfru ? cfru.EntityFormat == normalized
                     : scratch is Unbound.UnboundEngineSession && normalized == CfruEntity.Unbound);
@@ -80,7 +82,7 @@ public sealed class TransferPreviewService
                     ? "It goes back into its own game exactly as it was stored."
                     : "Conversion details are not available for this game's engine; the transfer itself is unchanged."],
                 TransferLegality.Unknown,
-                ["This game has no offline legality analysis."]);
+                ["This game has no offline legality analysis."], sourceWarnings);
         }
 
         var before = EntityBytes.Parse(entityBytes, format, session.GetEntity(box, slot).Context);
@@ -90,7 +92,10 @@ public sealed class TransferPreviewService
         if (conversion is null)
             return null;
         var after = session.GetEntity(box, slot);
-        var legality = AnalyzeLegality(session, box, slot, out var lines);
+        bool quetzal = Quetzal.QuetzalEntry.IsFormat(EntityBytes.Normalize(format)) || Quetzal.QuetzalEntry.HasMagic(entityBytes);
+        IReadOnlyList<string> lines = [];
+        var legality = quetzal ? TransferLegality.Unknown : AnalyzeLegality(session, box, slot, out lines);
+        if (quetzal) lines = ["The Quetzal origin is approximate; retail legality cannot be established."];
         // A ROM hack Pokémon crosses as a PK3: what that changed comes before the import's own notes.
         IReadOnlyList<string> warnings = CfruEntity.Recognize(format) is { } hack
             ? [.. CfruEntity.Pk3Adjustments(entityBytes, hack), .. conversion.Warnings]

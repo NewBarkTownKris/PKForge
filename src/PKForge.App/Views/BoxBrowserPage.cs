@@ -391,7 +391,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
 
     /// <summary>The idle status line, carrying the marker so the mode is visible on the screen it gates.</summary>
     private void ShowReady() => _viewModel.Status = _sessionsFor()?.ReadOnlyReason is not null
-        ? "Read-only · export available"
+        ? _sessionsFor()?.SupportsPortableExport == true ? "Read-only · approximate view" : "Read-only · export available"
         : HardcoreMode.IsOn
         ? $"Ready · {HardcoreMode.StatusLine}"
         : LayoutMarker ?? "Ready";
@@ -2389,11 +2389,11 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
         var session = _sessionsFor();
         if (session is null) return;
         var options = Menu(
-            new PadOption("Trainer card", IconPath: "trainer"),
-            new PadOption("Bag & items", IconPath: "bag"),
-            new PadOption("Pokédex", IconPath: "pokedex"),
+            session.SupportsSaveDataDetails ? new PadOption("Trainer card", IconPath: "trainer") : null,
+            session.SupportsSaveDataDetails ? new PadOption("Bag & items", IconPath: "bag") : null,
+            session.SupportsSaveDataDetails ? new PadOption("Pokédex", IconPath: "pokedex") : null,
             Allowed(SaveAction.EditTrainer, new("Fashion", IconPath: "box", Detail: "Unlock every outfit this save can legally own (X, Y, Sword and Shield).")),
-            new PadOption("Trainer records", IconPath: "records", Detail: "The game's own trainer records, view only."),
+            session.SupportsSaveDataDetails ? new PadOption("Trainer records", IconPath: "records", Detail: "The game's own trainer records, view only.") : null,
             Allowed(SaveAction.WriteRawBytes, new("Byte manipulation", IconPath: "hex", Detail: "Edit the save file's raw bytes. Written once, when you close.")),
             // Viewable in Hardcore mode; the editor itself refuses writes (EditWorld).
             Engine.EventFlagService.IsSupported(session) ? new PadOption("Event flags", IconPath: "check", Detail: "Turn story and event flags on or off, and edit event values.") : null,
@@ -2532,7 +2532,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
         var trainer = session.GetTrainer();
 
         // Hardcore: a read-only card (locked fields, no SAVE), so there is nothing to refuse.
-        var readOnly = Guard.Blocks(SaveAction.EditTrainer);
+        var readOnly = session.ReadOnlyReason is not null || Guard.Blocks(SaveAction.EditTrainer);
         var updated = await TrainerCardPopup.ShowAsync(_hostGrid, trainer, readOnly);
         if (readOnly || updated is null || updated == trainer) return;
 
@@ -3778,7 +3778,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
             slot,
             (i, legality) => SummaryLoaders.FromSlot(session, summaries, box, i, legality),
             box == -1 ? "Party" : $"Box {box + 1:00}",
-            CanEdit: true,
+            CanEdit: session.ReadOnlyReason is null,
             Icon: i => i < slots.Count && slots[i].Species is int species ? new SlotIcon(species, slots[i].Form, slots[i].IsShiny, slots[i].HasItem, slots[i].Traits) : null,
             Moved: i =>
             {
@@ -3820,6 +3820,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
             Allowed(SaveAction.Move, new("Send to another game…", IconPath: "send", Detail: "It leaves this save and joins another linked game.")),
             Allowed(SaveAction.Duplicate, new("Copy to another game…", IconPath: "copy", Detail: "A copy joins another linked game; the original stays here."), changesSource: false),
             new PadOption("Export .pk file", IconPath: "export", Detail: "Share this Pokémon as a file."),
+            _sessionsFor()?.SupportsPortableExport == true ? new PadOption("Export portable copy…", IconPath: "export", Detail: "Review conversion losses before exporting a portable file.") : null,
             new PadOption("Show as Showdown set", IconPath: "script", Detail: "Its set as Showdown text you can copy."),
             new PadOption("Show as QR code", IconPath: "qr", Detail: "Its Showdown set as a QR code."),
             new PadOption("Show as .pk QR", IconPath: "qr", Detail: "The whole Pokémon as a QR code that PKForge can scan into the Bank."),
@@ -3921,6 +3922,9 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
                 return;
             case "Export .pk file":
                 await ExportSlotAsync(slot);
+                return;
+            case "Export portable copy…":
+                await ExportPortableSlotAsync(slot);
                 return;
             case "Show as QR code":
                 await ShowQrAsync(slot);
@@ -4207,6 +4211,23 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
     }
 
     /// <summary>Writes the decrypted .pk* file and hands it to Android's share sheet.</summary>
+    private async Task ExportPortableSlotAsync(int slot)
+    {
+        try
+        {
+            var copy = _sessionsFor()?.ExportPortableSlot(_viewModel.BoxIndex, slot);
+            if (copy is null) return;
+            var choice = await PadMenu.ShowAsync(_hostGrid, "Portable copy",
+                string.Join("\n\n", copy.Warnings), "Export PK9", "Cancel");
+            if (choice != "Export PK9") return;
+            var path = System.IO.Path.Combine(FileSystem.CacheDirectory, copy.Export.FileName);
+            await File.WriteAllBytesAsync(path, copy.Export.Data);
+            await Share.Default.RequestAsync(new ShareFileRequest { Title = copy.Export.FileName, File = new ShareFile(path) });
+            _viewModel.Status = $"Exported {copy.Export.FileName}";
+        }
+        catch (Exception error) { _viewModel.Status = $"Export failed: {error.Message}"; }
+    }
+
     private async Task ExportSlotAsync(int slot)
     {
         var session = _sessionsFor();

@@ -55,6 +55,13 @@ public interface ISaveEngineSession : IDisposable
     /// <summary>Decrypted .pk* file bytes + canonical file name for the slot's mon.</summary>
     SlotExport ExportSlot(int box, int slot);
 
+    /// <summary>Whether an explicit, potentially lossy portable copy is available.</summary>
+    bool SupportsPortableExport => false;
+    PortableSlotExport? ExportPortableSlot(int box, int slot) => null;
+
+    /// <summary>Whether trainer, bag, and Pokédex details are available from the source.</summary>
+    bool SupportsSaveDataDetails => true;
+
     /// <summary>Showdown-format text for the slot's mon.</summary>
     string GetShowdownText(int box, int slot);
 
@@ -598,6 +605,9 @@ public sealed record BaseStats(int Hp, int Atk, int Def, int SpA, int SpD, int S
 /// <param name="Format">The exact PKHeX entity type of <paramref name="Data"/> ("PB8", "PK6", ...),
 /// so a deposit can record it: same-size formats cannot be told apart from the bytes alone.</param>
 public sealed record SlotExport(byte[] Data, string FileName, string? Format = null);
+
+/// <summary>The portable copy and compromises the player must confirm before export.</summary>
+public sealed record PortableSlotExport(SlotExport Export, IReadOnlyList<string> Warnings);
 
 public sealed record TrainerInfo(string Name, int TID, int SID, uint Money, int Gender);
 

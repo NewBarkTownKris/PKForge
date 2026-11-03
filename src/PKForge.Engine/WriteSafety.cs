@@ -166,6 +166,10 @@ internal static class WriteSafety
 
     public static string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope)
     {
+        if ((Quetzal.QuetzalEntry.HasMagic(original.Span) || Quetzal.QuetzalBattery.IsCandidate(original.Span) ||
+            RetroArchSaveContainer.IsCompressed(original.Span) && Quetzal.QuetzalBattery.IsCandidate(RetroArchSaveContainer.Decode(original.Span))) &&
+            !original.Span.SequenceEqual(candidate.Span))
+            return Quetzal.QuetzalBattery.ReadOnlyReason;
         if (RanchFormat.WriteRestriction(original.Span) is not null && !original.Span.SequenceEqual(candidate.Span))
             return RanchFormat.ReadOnlyReason;
         if (scope is { Unrestricted: true })

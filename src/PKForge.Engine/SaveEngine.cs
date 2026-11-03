@@ -6,10 +6,19 @@ namespace PKForge.Engine;
 /// <summary>Adapts the pinned PKHeX.Core save parser without leaking engine types.</summary>
 public sealed class SaveEngine : IFormatAwareSaveEngine
 {
-    public string? GetWriteRestriction(ReadOnlyMemory<byte> bytes) =>
-        RanchFormat.WriteRestriction(bytes.Span);
+    public string? GetWriteRestriction(ReadOnlyMemory<byte> bytes)
+    {
+        if (RanchFormat.WriteRestriction(bytes.Span) is { } ranch) return ranch;
+        return Quetzal.QuetzalEntry.HasMagic(bytes.Span) || Quetzal.QuetzalBattery.IsCandidate(bytes.Span) ||
+            RetroArchSaveContainer.IsCompressed(bytes.Span) && Quetzal.QuetzalBattery.IsCandidate(RetroArchSaveContainer.Decode(bytes.Span))
+            ? Quetzal.QuetzalBattery.ReadOnlyReason : null;
+    }
 
     static SaveEngine() => LegalityRules.Apply();
+
+    private static bool IsQuetzal(ReadOnlyMemory<byte> bytes) =>
+        Quetzal.QuetzalBattery.IsCandidate(bytes.Span) || RetroArchSaveContainer.IsCompressed(bytes.Span) &&
+        Quetzal.QuetzalBattery.IsCandidate(RetroArchSaveContainer.Decode(bytes.Span));
 
     /// <summary>
     /// Opens through the user's chosen route, but only when the bytes carry that layout:
@@ -20,6 +29,11 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     {
         if (format == SaveFormat.Auto) return OpenSession(bytes, displayName);
         var decoded = RetroArchSaveContainer.Decode(bytes.Span);
+        if (Quetzal.QuetzalBattery.IsCandidate(decoded))
+        {
+            if (format == SaveFormat.Standard) return new SaveEngineSession(bytes, displayName);
+            throw new InvalidDataException("This is a read-only Quetzal layout; it cannot be opened with a CFRU writer.");
+        }
         var unbound = SaveParser.IsPokemonUnbound(decoded);
         var gsc = !unbound && SaveParser.IsPokemonGsChronicles(decoded);
         var cfru = !unbound && !gsc && SaveParser.IsPokemonRadicalRed(decoded);
@@ -45,6 +59,8 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public SaveSnapshot Open(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
+        if (IsQuetzal(bytes))
+            return new SaveEngineSession(bytes, displayName).Snapshot;
         if (SaveParser.IsPokemonUnbound(RetroArchSaveContainer.Decode(bytes.Span)))
             return OpenUnbound(bytes, displayName).Snapshot;
         if (SaveParser.IsPokemonGsChronicles(RetroArchSaveContainer.Decode(bytes.Span)))
@@ -72,6 +88,8 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public ISaveEngineSession OpenSession(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
+        if (IsQuetzal(bytes))
+            return new SaveEngineSession(bytes, displayName);
         if (SaveParser.IsPokemonUnbound(RetroArchSaveContainer.Decode(bytes.Span)))
             return OpenUnbound(bytes, displayName);
         if (SaveParser.IsPokemonGsChronicles(RetroArchSaveContainer.Decode(bytes.Span)))
@@ -102,6 +120,11 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
         try
         {
             var decoded = RetroArchSaveContainer.Decode(bytes.Span);
+            if (Quetzal.QuetzalBattery.IsCandidate(decoded))
+            {
+                _ = new Quetzal.QuetzalViewSave(decoded);
+                return true;
+            }
             if (SaveParser.IsPokemonUnbound(decoded)) return true;
             if (SaveParser.IsPokemonGsChronicles(decoded)) return true;
             if (SaveParser.IsPokemonRadicalRed(decoded)) return true;
@@ -119,6 +142,11 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public BankEntryInfo? TryDescribeEntity(byte[] bytes, string sourceName, string? format = null)
     {
+        if (Quetzal.QuetzalEntry.IsFormat(EntityBytes.Normalize(format)) || Quetzal.QuetzalEntry.HasMagic(bytes))
+        {
+            try { return new Quetzal.QuetzalEntry(bytes).Describe(sourceName); }
+            catch (InvalidDataException) { return null; }
+        }
         // A CFRU mon is described from its own game's tables: most of its species have no PK3 at all.
         if (RadicalRed.CfruEntity.Recognize(format) is { } name)
             return RadicalRed.CfruEntity.Describe(bytes, name, sourceName);
@@ -131,6 +159,8 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public ISaveEngineSession? OpenEntitySession(byte[] entityBytes, string? displayName = null, string? format = null)
     {
+        if (Quetzal.QuetzalEntry.IsFormat(EntityBytes.Normalize(format)) || Quetzal.QuetzalEntry.HasMagic(entityBytes))
+            return new SaveEngineSession(new Quetzal.QuetzalViewSave(new Quetzal.QuetzalEntry(entityBytes)), displayName, entityBytes);
         // A CFRU mon is read in its own game's session, never as its PK3 view: an edit
         // saved from that view would replace the exact record with the lossy conversion.
         if (RadicalRed.CfruEntity.Recognize(format) is { } cfru)
@@ -197,6 +227,9 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
             if (!SaveParser.TryGetSaveFile(raw, out save) || save is null) return null;
         }
         catch (InvalidDataException) { return null; }
+
+        if (save is Quetzal.QuetzalViewSave)
+            return new SaveDescription("Quetzal (Alpha 9 v1 profile)", 3, save.OT, "", "en");
 
         if (SaveParser.IsLuminescentPlatinum(raw))
             return new SaveDescription("Luminescent Platinum", save.Generation, save.OT, save.PlayTimeString, LanguageTag(save));

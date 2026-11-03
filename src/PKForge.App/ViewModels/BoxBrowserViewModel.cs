@@ -110,7 +110,7 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
             var session = await _sessions.OpenAsync(document);
             _slots = session.Snapshot.Slots.ToArray();
             Save = session.Snapshot;
-            BoxIndex = 0;
+            BoxIndex = BoxCount == 0 && _sessions.CurrentSession?.HasParty == true ? -1 : 0;
             SelectedSlot = -1;
             Selected = null;
             OnPropertyChanged(nameof(VisibleSlots));
@@ -306,7 +306,8 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
         if (session is null) return;
         _slots = session.Snapshot.Slots.ToArray();
         Save = session.Snapshot;
-        BoxIndex = Math.Min(BoxIndex, Math.Max(0, BoxCount - 1));
+        BoxIndex = BoxCount == 0 && _sessions.CurrentSession?.HasParty == true
+            ? -1 : Math.Min(BoxIndex, Math.Max(0, BoxCount - 1));
         SelectedSlot = -1;
         Selected = null;
         OnPropertyChanged(nameof(VisibleSlots));

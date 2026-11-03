@@ -48,10 +48,10 @@ public sealed class SaveEngineSession : ISaveEngineSession
     /// be written out (SAV3.WriteSectors throws), and a standalone entity session is never
     /// written back to a save file - only its single mon is exported via ExportSlot.
     /// </summary>
-    internal SaveEngineSession(SaveFile save, string? displayName)
+    internal SaveEngineSession(SaveFile save, string? displayName, byte[]? originalBytes = null)
     {
         _save = save;
-        _originalBytes = [];
+        _originalBytes = originalBytes?.ToArray() ?? [];
         _displayName = displayName;
     }
 
@@ -59,7 +59,12 @@ public sealed class SaveEngineSession : ISaveEngineSession
     /// session (generate, import, move), not the state of the file at open time.</summary>
     public SaveSnapshot Snapshot => BuildSnapshot(_displayName);
 
-    public string? ReadOnlyReason => _save is SAV4Ranch ? RanchFormat.ReadOnlyReason : null;
+    public string? ReadOnlyReason => _save switch
+    {
+        SAV4Ranch => RanchFormat.ReadOnlyReason,
+        Quetzal.QuetzalViewSave => Quetzal.QuetzalViewSave.ViewReason,
+        _ => null,
+    };
 
     public bool HasParty => _save.HasParty;
 
@@ -675,12 +680,13 @@ public sealed class SaveEngineSession : ISaveEngineSession
         }
     }
 
-    public int Generation => _save.Generation;
+    public int Generation => _save is Quetzal.QuetzalViewSave ? 3 : _save.Generation;
 
     /// <summary>Every concrete game this save file can be. Group ids have no display
     /// name of their own (a Diamond/Pearl file reports DP), so the name comes from the
     /// concrete games behind it.</summary>
     public IReadOnlyList<string> GameNames =>
+        _save is Quetzal.QuetzalViewSave ? ["Quetzal Alpha 9 v1"] :
         _save is SAV4Ranch ? ["My Pokémon Ranch"] : [.. EncounterDatabase.ConcreteVersions(_save.Version).Select(GameInfo.GetVersionName)];
 
     public int PlaceLivingDex(byte[] compressedBundle)
@@ -766,7 +772,7 @@ public sealed class SaveEngineSession : ISaveEngineSession
     public bool SupportsBoxTools => ReadOnlyReason is null;
     // Stock legality data describes retail games: on Luminescent Platinum (its own encounters,
     // often randomized) every Pokémon would read illegal, so the checks are off, as in PKLumiHex.
-    public bool SupportsLegalityAnalysis => _save is not SAV4Ranch && !Luminescent.LumiData.IsLumi(_save);
+    public bool SupportsLegalityAnalysis => ReadOnlyReason is null && !Luminescent.LumiData.IsLumi(_save);
 
     public int BatchApply(IReadOnlyList<string> instructions, IReadOnlyList<int>? boxes = null)
     {
@@ -1018,11 +1024,26 @@ public sealed class SaveEngineSession : ISaveEngineSession
     public SlotExport ExportSlot(int box, int slot)
     {
         ThrowIfDisposed();
+        ValidateCoordinates(box, slot);
+        if (_save is Quetzal.QuetzalViewSave native) return native.Entry(box, slot).Export();
         var entity = GetEntityCore(box, slot);
         var data = new byte[entity.SIZE_PARTY];
         entity.WriteDecryptedDataParty(data);
         var safeName = string.Concat(entity.FileName.Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or ' ' ? c : '_'));
         return new SlotExport(data, safeName, EntityBytes.FormatOf(entity));
+    }
+
+    public bool SupportsPortableExport => _save is Quetzal.QuetzalViewSave;
+    public bool SupportsSaveDataDetails => _save is not Quetzal.QuetzalViewSave;
+
+    public PortableSlotExport? ExportPortableSlot(int box, int slot)
+    {
+        ThrowIfDisposed(); ValidateCoordinates(box, slot);
+        if (_save is not Quetzal.QuetzalViewSave native) return null;
+        var entry = native.Entry(box, slot); var mon = entry.Conversion.Pokemon;
+        var data = new byte[mon.SIZE_STORED]; mon.WriteDecryptedDataStored(data);
+        var name = System.IO.Path.ChangeExtension(entry.Export().FileName, ".pk9");
+        return new PortableSlotExport(new SlotExport(data, name, "PK9"), entry.Conversion.Warnings);
     }
 
     public string GetShowdownText(int box, int slot)
@@ -1532,6 +1553,8 @@ public sealed class SaveEngineSession : ISaveEngineSession
         }
         var conversion = CrossFormatConverter.Convert(imported, _save, out refusal);
         if (conversion is null) return null;
+        if (Quetzal.QuetzalEntry.IsFormat(EntityBytes.Normalize(format)) || Quetzal.QuetzalEntry.HasMagic(fileBytes))
+            conversion = conversion with { Warnings = [.. new Quetzal.QuetzalEntry(fileBytes).Conversion.Warnings, .. conversion.Warnings] };
         if (conversion.Backwards && !allowBackwards)
         {
             refusal = "Only the transfer flow can take a Pokémon back to an older game, because it shows what the downgrade changes.";
@@ -2793,7 +2816,7 @@ public sealed class SaveEngineSession : ISaveEngineSession
             slots.Add(new SlotSummary(-1, i, partyMon.Species == 0 ? null : partyMon.Species,
                 partyMon.Species == 0 ? null : partyMon.Nickname, partyMon.IsShiny, true, partyMon.Form, partyMon.IsEgg, partyMon.HeldItem, EntitySprite.Traits(partyMon)));
         }
-        return new SaveSnapshot(_save.Context.ToString(), _save.Generation, _originalBytes, slots, displayName);
+        return new SaveSnapshot(_save.Context.ToString(), Generation, _originalBytes, slots, displayName);
     }
 
     private void ValidateCoordinates(int box, int slot)

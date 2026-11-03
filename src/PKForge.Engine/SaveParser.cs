@@ -18,6 +18,11 @@ internal static class SaveParser
     internal static bool TryGetSaveFile(byte[] data, out SaveFile? save)
     {
         data = RetroArchSaveContainer.Decode(data);
+        if (Quetzal.QuetzalBattery.IsCandidate(data))
+        {
+            save = new Quetzal.QuetzalViewSave(data);
+            return true;
+        }
         if (RanchFormat.IsCandidate(data.Length))
         {
             RanchFormat.Validate(data);

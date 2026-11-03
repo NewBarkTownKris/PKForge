@@ -45,7 +45,7 @@ public static partial class EntityBytes
     };
 
     /// <summary>CFRU hack formats (<see cref="CfruEntity"/>): the game's own compact record, no PKHeX type.</summary>
-    private static readonly HashSet<string> Native = new(CfruEntity.Formats, StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> Native = new([.. CfruEntity.Formats, Quetzal.QuetzalEntry.Format], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The format name recorded for <paramref name="pk"/> ("PB8", "PK6", ...).</summary>
     public static string FormatOf(PKM pk) => pk.GetType().Name;
@@ -72,6 +72,7 @@ public static partial class EntityBytes
     /// <summary>The ROM hack whose own record <paramref name="format"/> names ("Radical Red"),
     /// or null for a PKHeX format. Only that game can edit or take back such a record exactly.</summary>
     public static string? RomHackGame(string? format) =>
+        Quetzal.QuetzalEntry.IsFormat(Normalize(format)) ? "Quetzal" :
         CfruEntity.Recognize(format) is { } cfru ? CfruEntity.GameName(cfru) : null;
 
     /// <summary>
@@ -99,6 +100,11 @@ public static partial class EntityBytes
     {
         ArgumentNullException.ThrowIfNull(bytes);
         var name = Normalize(format);
+        if (Quetzal.QuetzalEntry.IsFormat(name) || Quetzal.QuetzalEntry.HasMagic(bytes))
+        {
+            try { return new Quetzal.QuetzalEntry(bytes).Conversion.Pokemon; }
+            catch (InvalidDataException) { return null; }
+        }
         if (name is not null && Native.Contains(name))
             return CfruEntity.ToPk3(bytes, name); // another game's view; the hack itself imports the bytes as they are
         var hint = name is not null && Direct.TryGetValue(name, out var direct) ? direct.Context : prefer;
@@ -127,6 +133,8 @@ public static partial class EntityBytes
     /// </summary>
     public static IReadOnlyList<string> Candidates(byte[] bytes)
     {
+        if (Quetzal.QuetzalEntry.HasMagic(bytes))
+            return Parse(bytes, Quetzal.QuetzalEntry.Format) is null ? [] : [Quetzal.QuetzalEntry.Format];
         var found = new List<string>();
         foreach (var prefer in new[] { EntityContext.None, EntityContext.Gen6, EntityContext.Gen7, EntityContext.Gen8, EntityContext.Gen8b, EntityContext.Gen9, EntityContext.Gen9a })
         {
