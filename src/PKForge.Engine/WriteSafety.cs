@@ -91,6 +91,8 @@ internal static class WriteSafety
 
     public static LayoutRisk? AssessLayoutRisk(ReadOnlyMemory<byte> bytes)
     {
+        if (Monomyth.MonomythBattery.TryOpen(RetroArchSaveContainer.Decode(bytes.Span), out _))
+            return new LayoutRisk(LayoutRiskKind.CorruptingLayout, Monomyth.MonomythBattery.UnsupportedReason);
         Parsed? parsed;
         try { parsed = Parse(bytes); }
         catch (InvalidDataException) { return null; }
@@ -166,6 +168,8 @@ internal static class WriteSafety
 
     public static string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope)
     {
+        if (!original.Span.SequenceEqual(candidate.Span) && Monomyth.MonomythBattery.TryOpen(RetroArchSaveContainer.Decode(original.Span), out _))
+            return Monomyth.MonomythBattery.UnsupportedReason;
         if (scope is { Unrestricted: true })
             return null;
 

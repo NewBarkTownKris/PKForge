@@ -18,6 +18,8 @@ internal static class SaveParser
     internal static bool TryGetSaveFile(byte[] data, out SaveFile? save)
     {
         data = RetroArchSaveContainer.Decode(data);
+        if (Monomyth.MonomythBattery.TryOpen(data, out _))
+            throw new InvalidDataException(Monomyth.MonomythBattery.UnsupportedReason);
         if (SaveUtil.TryGetSaveFile(data, out save))
             return true;
 
